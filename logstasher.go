@@ -3,8 +3,8 @@
 package logstasher
 
 import (
+	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -14,7 +14,7 @@ import (
 )
 
 type Logger struct {
-	*log.Logger
+	*bufio.Writer
 }
 
 type logstashEvent struct {
@@ -28,9 +28,8 @@ type logstashEvent struct {
 	Params    map[string][]string `json:"params,omitempty"`
 }
 
-func NewLogger(file io.Writer) *Logger {
-	l := log.New(file, "[users]", 0)
-	return &Logger{l}
+func New(w io.Writer) *Logger {
+	return &Logger{bufio.NewWriter(w)}
 }
 
 func (l *Logger) ServeHTTP(rw http.ResponseWriter, req *http.Request, next http.HandlerFunc) {
@@ -53,9 +52,14 @@ func (l *Logger) ServeHTTP(rw http.ResponseWriter, req *http.Request, next http.
 	output, err := json.Marshal(event)
 	if err != nil {
 		// Should this be fatal?
-		l.Printf("Unable to JSON-ify our event (%#v): %v", event, err)
+		log.Printf("Unable to JSON-ify our event (%#v): %v", event, err)
 		return
 	}
 
-	l.Println(string(output))
+	l.Write(output)
+	l.WriteByte('\n')
+	err = l.Flush()
+	if err != nil {
+		log.Printf("logstasher could not write: %v", err)
+	}
 }
