@@ -4,13 +4,18 @@ package logstasher
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"time"
 
-	"github.com/go-martini/martini"
+	"github.com/codegangsta/negroni"
 )
+
+type Logger struct {
+	*log.Logger
+}
 
 type logstashEvent struct {
 	Timestamp string              `json:"@timestamp"`
@@ -23,32 +28,34 @@ type logstashEvent struct {
 	Params    map[string][]string `json:"params,omitempty"`
 }
 
-// Logger returns a middleware handler prints the request in a Logstash-JSON compatiable format
-func Logger(writer io.Writer) martini.Handler {
-	out := log.New(writer, "", 0)
-	return func(res http.ResponseWriter, req *http.Request, c martini.Context, log *log.Logger) {
-		start := time.Now()
+func NewLogger(file io.Writer) *Logger {
+	l := log.New(file, "[users]", 0)
+	return &Logger{l}
+}
 
-		rw := res.(martini.ResponseWriter)
-		c.Next()
+func (l *Logger) ServeHTTP(rw http.ResponseWriter, req *http.Request, next http.HandlerFunc) {
+	start := time.Now()
 
-		event := logstashEvent{
-			time.Now().Format(time.RFC3339),
-			1,
-			req.Method,
-			req.URL.Path,
-			rw.Status(),
-			rw.Size(),
-			time.Since(start).Seconds() * 1000.0,
-			map[string][]string(req.Form),
-		}
+	res := rw.(negroni.ResponseWriter)
+	next(rw, req)
 
-		output, err := json.Marshal(event)
-		if err != nil {
-			// Should this be fatal?
-			log.Printf("Unable to JSON-ify our event (%#v): %v", event, err)
-			return
-		}
-		out.Println(string(output))
+	event := logstashEvent{
+		time.Now().Format(time.RFC3339),
+		1,
+		req.Method,
+		req.URL.Path,
+		res.Status(),
+		res.Size(),
+		time.Since(start).Seconds() * 1000.0,
+		map[string][]string(req.Form),
 	}
+
+	output, err := json.Marshal(event)
+	if err != nil {
+		// Should this be fatal?
+		l.Printf("Unable to JSON-ify our event (%#v): %v", event, err)
+		return
+	}
+
+	l.Println(string(output))
 }
